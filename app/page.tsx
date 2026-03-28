@@ -1,190 +1,338 @@
-import Link from "next/link";
-import BottomNav from "./components/BottomNav";
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+
+type Message = {
+  role: "user" | "bot";
+  text: string;
+  audioUrl?: string;
+};
+
+const TONE_LABELS: Record<number, string> = {
+  1: "친절",
+  2: "퉁명",
+  3: "싸가지",
+  4: "단답",
+};
+
+const QUICK_INPUTS = ["🍣 일식", "🍜 중식", "🥩 한식", "🍕 양식"];
 
 export default function Home() {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [turnCount, setTurnCount] = useState(0);
+  const [playingIndex, setPlayingIndex] = useState<number | null>(null);
+
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const audioRefs = useRef<Record<number, HTMLAudioElement>>({});
+  const bufferRef = useRef("");
+  const ttsFiredRef = useRef(false);
+
+  useEffect(() => {
+    const saved = Number(localStorage.getItem("turnCount") ?? "0");
+    setTurnCount(saved);
+  }, []);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!input.trim() || isStreaming) return;
+
+    const userMessage = input.trim();
+    const nextTurn = turnCount + 1;
+    setInput("");
+    setTurnCount(nextTurn);
+    localStorage.setItem("turnCount", String(nextTurn));
+
+    const userMsgIndex = messages.length;
+    const botMsgIndex = messages.length + 1;
+
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", text: userMessage },
+      { role: "bot", text: "" },
+    ]);
+
+    setIsStreaming(true);
+    bufferRef.current = "";
+    ttsFiredRef.current = false;
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: userMessage, turnCount: nextTurn }),
+      });
+
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        for (const line of decoder.decode(value).split("\n")) {
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6).trim();
+          if (data === "[DONE]") continue;
+
+          try {
+            const { delta } = JSON.parse(data);
+            bufferRef.current += delta;
+
+            const ttsIdx = bufferRef.current.indexOf("TTS_SUMMARY:");
+            const displayText =
+              ttsIdx === -1
+                ? bufferRef.current
+                : bufferRef.current.slice(0, ttsIdx).trimEnd();
+
+            setMessages((prev) => {
+              const updated = [...prev];
+              if (updated[botMsgIndex]) {
+                updated[botMsgIndex] = { ...updated[botMsgIndex], text: displayText };
+              }
+              return updated;
+            });
+
+            // Parallel TTS trigger
+            if (!ttsFiredRef.current && ttsIdx !== -1) {
+              const summaryLines = bufferRef.current
+                .slice(ttsIdx + "TTS_SUMMARY:".length)
+                .split("\n")
+                .map((l) => l.trim())
+                .filter(Boolean);
+              if (summaryLines.length >= 3) {
+                ttsFiredRef.current = true;
+                fetchTTS(summaryLines.slice(0, 3).join("\n"), botMsgIndex);
+              }
+            }
+          } catch {
+            // ignore malformed chunks
+          }
+        }
+      }
+    } finally {
+      setIsStreaming(false);
+    }
+  }
+
+  async function fetchTTS(text: string, index: number) {
+    try {
+      const res = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+
+      setMessages((prev) => {
+        const updated = [...prev];
+        if (updated[index]) {
+          updated[index] = { ...updated[index], audioUrl: url };
+        }
+        return updated;
+      });
+
+      setTimeout(() => {
+        const audio = audioRefs.current[index];
+        if (audio) {
+          audio.src = url;
+          audio.play();
+          setPlayingIndex(index);
+        }
+      }, 100);
+    } catch {
+      // TTS 실패해도 텍스트는 유지
+    }
+  }
+
+  function toggleAudio(index: number) {
+    const audio = audioRefs.current[index];
+    if (!audio) return;
+    if (playingIndex === index && !audio.paused) {
+      audio.pause();
+      setPlayingIndex(null);
+    } else {
+      Object.values(audioRefs.current).forEach((a) => a.pause());
+      audio.play();
+      setPlayingIndex(index);
+    }
+  }
+
+  const nextToneLabel = TONE_LABELS[Math.min(turnCount + 1, 4)];
+
   return (
-    <div className="text-on-surface">
-      {/* TopAppBar */}
-      <header className="fixed top-0 w-full flex justify-between items-center px-6 py-4 bg-[#f6f6f6]/80 backdrop-blur-xl z-50 shadow-[0_8px_24px_rgba(45,47,47,0.06)]">
+    <div className="flex flex-col h-screen bg-background">
+      {/* Header */}
+      <header className="flex-shrink-0 flex items-center justify-between px-5 py-4 bg-[#f6f6f6]/90 backdrop-blur-xl border-b border-outline-variant/20 shadow-sm">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full overflow-hidden bg-surface-container-highest">
-            <img
-              className="w-full h-full object-cover"
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuBvVDoMSXTi82fvuAnK47rc3kmUlWv7cBcr4125mjSx10w_5Lwn7zEuFnscYN7GVyMSVBFlam5i00EBBQ4PTt7__JLAYNJEQ5awstUjiSBloIqDewezuNVYACLvUfD5b11Ih1rkqvh9oyeO1X7pedhYZSvvzXSPuAxAo6zcChQlA7W67cZY0JOUJgRxCuca7SlZD7mW2BlthGqkweYmMzzKhDoyR9_Hun3vmHzeJKi0f9ozoNuQFxupiD_pAtDhnNtrJcZmqbfSHZc"
-              alt="Profile"
-            />
+          <div className="w-9 h-9 rounded-full bg-primary-gradient flex items-center justify-center shadow">
+            <span
+              className="material-symbols-outlined text-white text-lg"
+              style={{ fontVariationSettings: "'FILL' 1" }}
+            >
+              restaurant
+            </span>
           </div>
-          <span className="text-xl font-extrabold tracking-tight text-[#2d2f2f]">Liar Foodie</span>
+          <div>
+            <h1 className="text-base font-extrabold tracking-tight text-[#2d2f2f] leading-none">
+              거짓말쟁이 메뉴봇
+            </h1>
+            <p className="text-[10px] text-on-surface-variant font-medium mt-0.5">
+              진실 속의 거짓말
+            </p>
+          </div>
         </div>
-        <div className="flex items-center gap-4">
-          <button className="text-[#5a5c5c] hover:opacity-80 transition-opacity active:scale-95">
-            <span className="material-symbols-outlined text-2xl">search</span>
-          </button>
-          <button className="text-[#5a5c5c] hover:opacity-80 transition-opacity active:scale-95">
-            <span className="material-symbols-outlined text-2xl">notifications</span>
+        <div className="flex items-center gap-2">
+          {turnCount > 0 && (
+            <span className="text-xs font-bold px-3 py-1 rounded-full bg-primary/10 text-primary">
+              {nextToneLabel} 모드
+            </span>
+          )}
+          <button
+            onClick={() => {
+              setMessages([]);
+              setTurnCount(0);
+              localStorage.setItem("turnCount", "0");
+            }}
+            className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container transition-colors"
+            title="대화 초기화"
+          >
+            <span className="material-symbols-outlined text-lg">refresh</span>
           </button>
         </div>
       </header>
 
-      <main className="pt-24 pb-32 px-6">
-        {/* Hero Section */}
-        <section className="mb-10">
-          <h1 className="text-3xl font-extrabold text-on-surface leading-tight mb-2 tracking-tight">
-            What&apos;s the <span className="text-primary italic">lie</span> of the day?
-          </h1>
-          <p className="text-on-surface-variant text-sm font-medium">Discover culinary myths and flavor phantoms.</p>
-        </section>
-
-        {/* Search Bar */}
-        <section className="mb-12">
-          <div className="relative flex items-center bg-surface-container-highest rounded-2xl px-5 py-4 shadow-sm">
-            <span className="material-symbols-outlined text-on-surface-variant mr-3">restaurant</span>
-            <input
-              className="bg-transparent border-none focus:ring-0 text-on-surface font-medium placeholder-on-surface-variant/60 w-full outline-none"
-              placeholder="Find a fake foodie treasure..."
-              type="text"
-            />
-            <button className="bg-primary-gradient p-2 rounded-xl text-white shadow-lg flex items-center justify-center">
-              <span className="material-symbols-outlined text-xl">tune</span>
-            </button>
+      {/* Messages */}
+      <main className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
+        {messages.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full gap-4 text-center px-8">
+            <div className="w-20 h-20 rounded-full bg-primary-gradient flex items-center justify-center shadow-lg">
+              <span
+                className="material-symbols-outlined text-white text-4xl"
+                style={{ fontVariationSettings: "'FILL' 1" }}
+              >
+                restaurant
+              </span>
+            </div>
+            <div>
+              <p className="font-extrabold text-on-surface text-xl">뭐 먹고 싶어?</p>
+              <p className="text-on-surface-variant text-sm mt-1 leading-relaxed">
+                일식, 중식, 한식 또는 재료를 입력하면<br />거짓말 가득한 맛집을 추천해줄게
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2 justify-center mt-2">
+              {QUICK_INPUTS.map((label) => (
+                <button
+                  key={label}
+                  onClick={() => setInput(label.split(" ")[1])}
+                  className="px-4 py-2 rounded-full bg-surface-container text-on-surface text-sm font-medium hover:bg-surface-container-high transition-colors border border-outline-variant/20"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
-        </section>
+        )}
 
-        {/* Recommended Fake Categories */}
-        <section className="mb-12">
-          <div className="flex justify-between items-end mb-6">
-            <h2 className="text-xl font-bold tracking-tight">Recommended Fake Categories</h2>
-            <span className="text-xs font-bold text-secondary flex items-center gap-1 bg-secondary-container/30 px-3 py-1 rounded-full uppercase tracking-wider">
-              Exclusive
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            {/* Large Feature Card */}
-            <Link href="/restaurant" className="col-span-2 relative h-48 rounded-3xl overflow-hidden bg-surface-container-low group">
-              <img
-                className="absolute inset-0 w-full h-full object-cover"
-                src="https://lh3.googleusercontent.com/aida-public/AB6AXuB8ZalN9lep4glwhbMoJlsLNyZ-ux9QtuvrPpoFPUW1SHgZt3UzFut3xVfsc0uxOzBb3FpiR0L6OaBuYYAPp4hWVPysxDr79bHzftXqELuqwS5SkFzACTwwHmZKwO1qfYVncaJRAlbGxIakMSQJxfjxBtwZOGQcR6Tmmb7Ph_E7KSslXluTP-U9TwsKCnUXpsxFt_qIhRugqS2N01MqklNMTFnZJspLCnyvStO6e1qPkSqTsgsilYrHcXV0VI8wzWYryVsijf6Br5Y"
-                alt="Mint Choco Jjamppong"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-              <div className="absolute bottom-6 left-6 right-6">
-                <div className="text-secondary-fixed font-bold text-xs mb-1 uppercase tracking-widest">Seasonal Myth</div>
-                <h3 className="text-white text-2xl font-bold">Mint Choco Jjamppong</h3>
-                <div className="flex items-center mt-2 gap-2">
-                  <span className="text-tertiary-fixed text-sm flex items-center">
-                    <span className="material-symbols-outlined text-sm mr-1" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
-                    4.9 (12k)
+        {messages.map((msg, i) => (
+          <div
+            key={i}
+            className={`flex items-end gap-2 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+          >
+            {msg.role === "bot" && (
+              <div className="w-8 h-8 rounded-full bg-primary-gradient flex items-center justify-center shadow flex-shrink-0 mb-1">
+                <span
+                  className="material-symbols-outlined text-white text-sm"
+                  style={{ fontVariationSettings: "'FILL' 1" }}
+                >
+                  restaurant
+                </span>
+              </div>
+            )}
+
+            <div className={`flex flex-col gap-1.5 ${msg.role === "user" ? "items-end" : "items-start"} max-w-[80%]`}>
+              <div
+                className={`rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ${
+                  msg.role === "user"
+                    ? "bg-primary text-on-primary rounded-br-sm"
+                    : "bg-surface-container-lowest border border-outline-variant/20 text-on-surface rounded-bl-sm shadow-sm"
+                }`}
+              >
+                {msg.text || (
+                  <span className="flex items-center gap-1 py-0.5">
+                    <span className="w-2 h-2 bg-primary/40 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                    <span className="w-2 h-2 bg-primary/40 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                    <span className="w-2 h-2 bg-primary/40 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
                   </span>
-                </div>
+                )}
+                {msg.role === "bot" && isStreaming && i === messages.length - 1 && msg.text && (
+                  <span className="inline-block w-0.5 h-4 bg-primary ml-0.5 animate-pulse rounded-sm align-middle" />
+                )}
               </div>
-            </Link>
 
-            {/* Secondary Cards */}
-            <div className="bg-surface-container-lowest p-4 rounded-3xl shadow-[0_8px_24px_rgba(45,47,47,0.06)] flex flex-col justify-between h-44 border border-outline-variant/10">
-              <div className="w-12 h-12 rounded-2xl bg-secondary-container/50 flex items-center justify-center text-on-secondary-container">
-                <span className="material-symbols-outlined text-3xl">icecream</span>
-              </div>
-              <div>
-                <h3 className="font-bold text-sm leading-tight mb-1">Spicy Strawberry Bibimbap</h3>
-                <p className="text-[10px] text-on-surface-variant font-medium">Refreshing Heat</p>
-              </div>
-            </div>
-
-            <div className="bg-surface-container-lowest p-4 rounded-3xl shadow-[0_8px_24px_rgba(45,47,47,0.06)] flex flex-col justify-between h-44 border border-outline-variant/10">
-              <div className="w-12 h-12 rounded-2xl bg-primary-container/20 flex items-center justify-center text-primary">
-                <span className="material-symbols-outlined text-3xl">liquor</span>
-              </div>
-              <div>
-                <h3 className="font-bold text-sm leading-tight mb-1">Cilantro Espresso Martini</h3>
-                <p className="text-[10px] text-on-surface-variant font-medium">Waking Nightmares</p>
-              </div>
+              {/* TTS 버튼 */}
+              {msg.role === "bot" && msg.audioUrl && (
+                <>
+                  <button
+                    onClick={() => toggleAudio(i)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary-container text-on-secondary-container text-xs font-bold hover:opacity-90 transition-all active:scale-95"
+                  >
+                    <span
+                      className="material-symbols-outlined text-sm"
+                      style={{ fontVariationSettings: "'FILL' 1" }}
+                    >
+                      {playingIndex === i && audioRefs.current[i] && !audioRefs.current[i].paused
+                        ? "pause"
+                        : "play_arrow"}
+                    </span>
+                    3줄 요약 듣기
+                  </button>
+                  <audio
+                    ref={(el) => {
+                      if (el) audioRefs.current[i] = el;
+                    }}
+                    src={msg.audioUrl}
+                    onEnded={() => setPlayingIndex(null)}
+                  />
+                </>
+              )}
             </div>
           </div>
-        </section>
+        ))}
 
-        {/* Trending Fake Restaurants */}
-        <section>
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-xl font-bold tracking-tight">Trending Fake Restaurants</h2>
-            <button className="text-on-surface-variant text-sm font-semibold">See All</button>
-          </div>
-          <div className="flex overflow-x-auto no-scrollbar gap-5 -mx-6 px-6">
-            {/* Card 1 */}
-            <Link href="/restaurant" className="min-w-[280px] bg-surface-container-lowest rounded-[2rem] overflow-hidden shadow-[0_8px_24px_rgba(45,47,47,0.06)] flex flex-col">
-              <div className="h-40 relative">
-                <img
-                  className="w-full h-full object-cover"
-                  src="https://lh3.googleusercontent.com/aida-public/AB6AXuCfH7Nz1dayGEmUlgqmaNt0Ntbp5KE66SVk5fGCysU6oC1zV0TjQvgouu8DtO6OK4rJWKu2u-6X3qhN4KTP_uJSAx8nenRPB60nz37S75uuoHT4S7R7KhYWkDTXVMw62X_r2qwvJzWBHAwyto_bueDQqzQuHzNxPsVoYOLlNUZFOKHx0geGtfQ9f7Ghix8QcTjZAzwHAAuIRwinmLjkC16mB7SUgGO8BLMpvj5JWoe9E4ibKwrCiAdxBtGlGypo9nm5nnEy_gye1X8"
-                  alt="The Invisible Kitchen"
-                />
-                <div className="absolute top-4 right-4 bg-white/90 backdrop-blur-md px-3 py-1 rounded-full text-[10px] font-bold text-primary flex items-center gap-1">
-                  <span className="material-symbols-outlined text-xs">local_fire_department</span> Trending
-                </div>
-              </div>
-              <div className="p-6">
-                <h3 className="text-lg font-bold mb-1">The Invisible Kitchen</h3>
-                <p className="text-on-surface-variant text-xs mb-4">Zero-calorie holographic steaks.</p>
-                <div className="flex items-center justify-between">
-                  <div className="flex -space-x-2">
-                    <div className="w-7 h-7 rounded-full border-2 border-white bg-surface-variant" />
-                    <div className="w-7 h-7 rounded-full border-2 border-white bg-surface-dim" />
-                    <div className="w-7 h-7 rounded-full border-2 border-white bg-surface-container-high flex items-center justify-center text-[8px] font-bold">+8k</div>
-                  </div>
-                  <button className="bg-secondary-container text-on-secondary-container text-xs font-bold px-4 py-2 rounded-full hover:opacity-90 transition-all">Book Waitlist</button>
-                </div>
-              </div>
-            </Link>
-
-            {/* Card 2 */}
-            <Link href="/restaurant" className="min-w-[280px] bg-surface-container-lowest rounded-[2rem] overflow-hidden shadow-[0_8px_24px_rgba(45,47,47,0.06)] flex flex-col">
-              <div className="h-40 relative">
-                <img
-                  className="w-full h-full object-cover"
-                  src="https://lh3.googleusercontent.com/aida-public/AB6AXuAOT9QP6f39VHzxWFmeFfPwbKMzItrDTw5nOKxgdIUzr2DaD8iDqJE1oLvrASyY6lOJqVSrg1s2ZGrXMRzfmxaZh-SzsQkcM8bgVsbVnq7fVn_2cTxUYRRCSnC7F6F45GZ0lXIZ10iGMPTIO-u8VRquZDmpa2boCwRTpiYrF7JJbGIrjm6uEYcvAWCO_vZZ4PN6wmkejEDpBqZQ09x-2TGhMUqgk8dsMCf3obidn95aoZ-CbJ2fKkxsYOmYQ2BS-kfnMxki0OJJ4Pc"
-                  alt="Gravity-Free Bistro"
-                />
-                <div className="absolute top-4 right-4 bg-white/90 backdrop-blur-md px-3 py-1 rounded-full text-[10px] font-bold text-secondary flex items-center gap-1">
-                  <span className="material-symbols-outlined text-xs">verified</span> Certified Lie
-                </div>
-              </div>
-              <div className="p-6">
-                <h3 className="text-lg font-bold mb-1">Gravity-Free Bistro</h3>
-                <p className="text-on-surface-variant text-xs mb-4">Floating noodles served mid-air.</p>
-                <div className="flex items-center justify-between">
-                  <div className="flex -space-x-2">
-                    <div className="w-7 h-7 rounded-full border-2 border-white bg-surface-variant" />
-                    <div className="w-7 h-7 rounded-full border-2 border-white bg-surface-dim" />
-                    <div className="w-7 h-7 rounded-full border-2 border-white bg-surface-container-high flex items-center justify-center text-[8px] font-bold">+2k</div>
-                  </div>
-                  <button className="bg-secondary-container text-on-secondary-container text-xs font-bold px-4 py-2 rounded-full hover:opacity-90 transition-all">Explore Menu</button>
-                </div>
-              </div>
-            </Link>
-          </div>
-        </section>
-
-        {/* About Section */}
-        <section className="mt-16 pb-12 flex flex-col items-center">
-          <button className="group relative flex flex-col items-center gap-2">
-            <span className="text-on-surface-variant/40 text-[10px] font-bold tracking-widest uppercase">Transparency</span>
-            <span className="text-on-surface-variant/60 text-xs font-medium group-hover:text-primary transition-colors underline underline-offset-4 decoration-dotted">
-              About Liar Foodie
-            </span>
-            <div className="mt-4 opacity-0 group-hover:opacity-100 transition-opacity bg-surface-container text-[10px] py-1 px-3 rounded-full text-on-surface-variant font-bold border border-outline-variant/20 italic">
-              April Fools&apos;! None of this exists... yet.
-            </div>
-          </button>
-        </section>
+        <div ref={bottomRef} />
       </main>
 
-      <BottomNav active="home" />
-
-      {/* FAB */}
-      <div className="fixed bottom-28 right-6 z-40">
-        <button className="bg-primary-gradient w-14 h-14 rounded-full flex items-center justify-center text-white shadow-2xl shadow-primary/40 active:scale-95 transition-transform">
-          <span className="material-symbols-outlined text-2xl" style={{ fontVariationSettings: "'FILL' 1" }}>add_reaction</span>
-        </button>
-      </div>
+      {/* Input */}
+      <footer className="flex-shrink-0 px-4 py-4 bg-[#f6f6f6]/90 backdrop-blur-xl border-t border-outline-variant/20">
+        <form onSubmit={handleSubmit} className="flex items-center gap-3">
+          <input
+            className="flex-1 bg-surface-container-highest rounded-2xl px-4 py-3 text-sm text-on-surface placeholder-on-surface-variant/60 outline-none focus:ring-2 focus:ring-primary/30 transition-all"
+            placeholder="뭐 먹고 싶어? (일식, 삼겹살...)"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            disabled={isStreaming}
+          />
+          <button
+            type="submit"
+            disabled={isStreaming || !input.trim()}
+            className="w-11 h-11 rounded-full bg-primary-gradient flex items-center justify-center text-white shadow-lg disabled:opacity-40 active:scale-95 transition-all flex-shrink-0"
+          >
+            <span
+              className="material-symbols-outlined text-xl"
+              style={{ fontVariationSettings: "'FILL' 1" }}
+            >
+              send
+            </span>
+          </button>
+        </form>
+      </footer>
     </div>
   );
 }

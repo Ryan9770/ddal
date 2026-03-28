@@ -6,10 +6,10 @@ type Tab = "home" | "picks" | "gallery" | "settings";
 
 export default function BottomNav({ active }: { active: Tab }) {
   const tabs = [
-    { id: "home" as Tab, href: "/", icon: "home", label: "Home" },
-    { id: "picks" as Tab, href: "#", icon: "bookmark", label: "My Picks" },
-    { id: "gallery" as Tab, href: "/share", icon: "celebration", label: "Prank Gallery" },
-    { id: "settings" as Tab, href: "#", icon: "settings", label: "Settings" },
+    { id: "home" as Tab, href: "/", icon: "home", label: "홈" },
+    { id: "picks" as Tab, href: "#", icon: "bookmark", label: "내 찜" },
+    { id: "gallery" as Tab, href: "/share", icon: "celebration", label: "낚시 갤러리" },
+    { id: "settings" as Tab, href: "#", icon: "settings", label: "설정" },
   ];
 
   return (
@@ -21,18 +21,12 @@ export default function BottomNav({ active }: { active: Tab }) {
             key={tab.id}
             href={tab.href}
             className={`flex flex-col items-center justify-center rounded-xl px-4 py-1 transition-all duration-300 hover:bg-[#f0f1f1] ${
-              isActive
-                ? "text-[#FF5C00] font-bold"
-                : "text-[#5a5c5c]"
+              isActive ? "text-[#FF5C00] font-bold" : "text-[#5a5c5c]"
             }`}
           >
             <span
               className="material-symbols-outlined text-2xl"
-              style={
-                isActive
-                  ? { fontVariationSettings: "'FILL' 1" }
-                  : undefined
-              }
+              style={isActive ? { fontVariationSettings: "'FILL' 1" } : undefined}
             >
               {tab.icon}
             </span>

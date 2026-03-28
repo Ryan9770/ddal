@@ -1,19 +1,142 @@
+"use client";
+
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import BottomNav from "../components/BottomNav";
 
 export default function RestaurantPage() {
+  const params = useSearchParams();
+  const q = params.get("q") ?? "";
+  const turn = Number(params.get("turn") ?? "1");
+
+  const [displayText, setDisplayText] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  const bufferRef = useRef("");
+  const ttsFiredRef = useRef(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    if (!q) return;
+    startStream();
+    return () => {
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+    };
+  }, [q]);
+
+  async function startStream() {
+    setIsStreaming(true);
+    setDisplayText("");
+    setAudioUrl(null);
+    bufferRef.current = "";
+    ttsFiredRef.current = false;
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: q, turnCount: turn }),
+      });
+
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const raw = decoder.decode(value);
+        for (const line of raw.split("\n")) {
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6).trim();
+          if (data === "[DONE]") continue;
+
+          try {
+            const { delta } = JSON.parse(data);
+            bufferRef.current += delta;
+
+            // Display text: hide TTS_SUMMARY section
+            const ttsIdx = bufferRef.current.indexOf("TTS_SUMMARY:");
+            setDisplayText(
+              ttsIdx === -1
+                ? bufferRef.current
+                : bufferRef.current.slice(0, ttsIdx).trimEnd()
+            );
+
+            // Parallel TTS trigger: fire as soon as 3 summary lines are ready
+            if (!ttsFiredRef.current && ttsIdx !== -1) {
+              const afterMarker = bufferRef.current.slice(ttsIdx + "TTS_SUMMARY:".length);
+              const summaryLines = afterMarker
+                .split("\n")
+                .map((l) => l.trim())
+                .filter(Boolean);
+              if (summaryLines.length >= 3) {
+                ttsFiredRef.current = true;
+                fetchTTS(summaryLines.slice(0, 3).join("\n"));
+              }
+            }
+          } catch {
+            // ignore malformed chunks
+          }
+        }
+      }
+    } finally {
+      setIsStreaming(false);
+    }
+  }
+
+  async function fetchTTS(text: string) {
+    try {
+      const res = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      setAudioUrl(url);
+      if (audioRef.current) {
+        audioRef.current.src = url;
+        audioRef.current.play();
+        setIsPlaying(true);
+      }
+    } catch {
+      // TTS 실패해도 텍스트는 그대로 표시
+    }
+  }
+
+  function toggleAudio() {
+    if (!audioRef.current || !audioUrl) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      audioRef.current.play();
+      setIsPlaying(true);
+    }
+  }
+
+  // Parse restaurant name from first non-empty line
+  const firstLine = displayText.split("\n").find((l) => l.trim()) ?? "";
+  const restaurantName = firstLine.replace(/^[\d.]+\s*/, "").trim() || (isStreaming ? "추천 중..." : "Liar Foodie Pick");
+
   return (
     <div className="bg-background text-on-surface">
+      <audio
+        ref={audioRef}
+        onEnded={() => setIsPlaying(false)}
+        className="hidden"
+      />
+
       {/* TopAppBar */}
       <header className="fixed top-0 w-full flex justify-between items-center px-6 py-4 bg-[#f6f6f6]/80 backdrop-blur-xl z-50 shadow-[0_8px_24px_rgba(45,47,47,0.06)]">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full overflow-hidden bg-surface-container">
-            <img
-              alt="User Profile"
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuBw0oIuJ29ifQaitdOs169z3CdY6OXqmT9tnkXuDYwzWuvrwwXARrOGo6t0uqc7-d5G-tlDSBteTpTGhwP4Q1zki42W7wCYA1ONF5JSshQ50as5AR7g3GQiaPuTHRlfziSwIcYXbmq5LVD4FMCggfNkYXdWcttrdmLMu4DC0pXioKiAL2VrnJUsty7Mk4d2dBuFL5vFugfhnun5PDhSprAcQfImcUupC9gYjwFSpEib8BqcxGe-umXZChP0M0J70kvz8iY7CcO4SSc"
-              className="w-full h-full object-cover"
-            />
-          </div>
+          <Link href="/" className="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center hover:opacity-80 transition-opacity">
+            <span className="material-symbols-outlined text-on-surface">arrow_back</span>
+          </Link>
           <h1 className="text-xl font-extrabold tracking-tight text-[#2d2f2f]">Liar Foodie</h1>
         </div>
         <button className="text-[#5a5c5c] hover:opacity-80 transition-opacity active:scale-95">
@@ -31,14 +154,14 @@ export default function RestaurantPage() {
               alt="Seoul map"
             />
           </div>
-          {/* Map Pin Overlay */}
+          {/* Map Pin */}
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="relative">
               <div className="bg-primary p-3 rounded-full shadow-lg border-2 border-surface-container-lowest flex items-center justify-center animate-pulse">
                 <span className="material-symbols-outlined text-on-primary" style={{ fontVariationSettings: "'FILL' 1" }}>location_on</span>
               </div>
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 glass-panel px-4 py-2 rounded-xl shadow-xl border border-outline-variant/15 whitespace-nowrap">
-                <span className="text-on-surface font-bold text-sm">Gundae Blue Dragon Chicken</span>
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 glass-panel px-4 py-2 rounded-xl shadow-xl border border-outline-variant/15 whitespace-nowrap max-w-[200px] truncate">
+                <span className="text-on-surface font-bold text-sm">{restaurantName}</span>
               </div>
             </div>
           </div>
@@ -53,39 +176,55 @@ export default function RestaurantPage() {
           </div>
         </section>
 
-        {/* Product Details */}
+        {/* Content Card */}
         <article className="max-w-2xl mx-auto -mt-8 relative z-10 px-4">
           <div className="bg-surface-container-lowest rounded-[2rem] shadow-[0_8px_48px_rgba(45,47,47,0.08)] overflow-hidden">
             {/* Hero Image */}
-            <div className="relative h-72 overflow-hidden">
-              <img
-                className="w-full h-full object-cover"
-                src="https://lh3.googleusercontent.com/aida-public/AB6AXuDQd9Lryk0V7mqWT_bbI7DRYdKPpiYQfMYrSQrj9lim-GYeZVDp0iSYRVPAiMMpETV6conZBCfOLlq--cy4_NDsFVLrfbfB84wetM9wV4myzfUa4r-2VC0LSft0zzsYDIBa5ZdAUStR5O9IEPAVdnoA11bTdoexilHsOse87rLjSuo53vrduxBUaue0snXsao_8ibsKL7s_FFLSqFVODU5MqbVZGvThVcP0LLhqy_cje7rWmMtijdWVZeGHeOISgutgE667RJxafoM"
-                alt="Gundae Blue Dragon Chicken"
-              />
+            <div className="relative h-72 overflow-hidden bg-gradient-to-br from-primary-container/30 to-secondary-container/30 flex items-center justify-center">
+              <span className="material-symbols-outlined text-primary/30 text-[120px]" style={{ fontVariationSettings: "'FILL' 1" }}>
+                restaurant
+              </span>
               <div className="absolute top-4 right-4 bg-tertiary-container text-on-tertiary-container font-bold px-3 py-1 rounded-full text-xs uppercase tracking-widest shadow-sm">
-                Limited Edition
+                Liar&apos;s Special
               </div>
             </div>
 
             <div className="p-8">
-              {/* Title & Price */}
+              {/* Title */}
               <div className="flex justify-between items-start mb-6">
-                <div>
-                  <h2 className="text-3xl font-extrabold text-on-surface leading-tight mb-2">Gundae Blue Dragon Chicken</h2>
+                <div className="flex-1 pr-4">
+                  <h2 className="text-2xl font-extrabold text-on-surface leading-tight mb-2">
+                    {isStreaming && !displayText ? (
+                      <span className="inline-block w-48 h-7 bg-surface-container-high rounded animate-pulse" />
+                    ) : (
+                      restaurantName
+                    )}
+                  </h2>
                   <div className="flex items-center gap-2">
                     <div className="flex text-tertiary-container">
                       {[...Array(5)].map((_, i) => (
                         <span key={i} className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
                       ))}
                     </div>
-                    <span className="text-on-surface-variant text-sm font-medium">5.0 (8,204 reviews)</span>
+                    <span className="text-on-surface-variant text-sm font-medium">5.0 (거짓말)</span>
                   </div>
                 </div>
-                <div className="text-right">
-                  <span className="block text-2xl font-black text-primary">29,900 KRW</span>
-                  <span className="text-xs text-on-surface-variant font-medium uppercase tracking-tighter">Per Platter</span>
-                </div>
+                {/* TTS Play Button */}
+                {audioUrl && (
+                  <button
+                    onClick={toggleAudio}
+                    className="w-12 h-12 rounded-full bg-primary-gradient flex items-center justify-center text-white shadow-lg flex-shrink-0 active:scale-95 transition-transform"
+                  >
+                    <span className="material-symbols-outlined text-xl" style={{ fontVariationSettings: "'FILL' 1" }}>
+                      {isPlaying ? "pause" : "play_arrow"}
+                    </span>
+                  </button>
+                )}
+                {isStreaming && !audioUrl && ttsFiredRef.current && (
+                  <div className="w-12 h-12 rounded-full bg-surface-container-high flex items-center justify-center flex-shrink-0">
+                    <span className="material-symbols-outlined text-on-surface-variant text-xl animate-spin">progress_activity</span>
+                  </div>
+                )}
               </div>
 
               {/* Trust Meter */}
@@ -100,21 +239,24 @@ export default function RestaurantPage() {
                 <div className="w-full bg-surface-container-high h-3 rounded-full overflow-hidden">
                   <div className="h-full bg-gradient-to-r from-secondary to-secondary-container w-full" />
                 </div>
-                <p className="mt-3 text-xs text-on-surface-variant leading-relaxed">
-                  This vendor has undergone the Triple-Stage Authenticity Protocol. Every ingredient is tracked via blockchain from the Blue Dragon River to your doorstep.
-                </p>
               </div>
 
-              {/* Description */}
-              <div className="space-y-6 text-on-surface-variant leading-relaxed mb-10">
-                <section>
-                  <h3 className="text-on-surface font-bold text-lg mb-2">The Celestial Glaze</h3>
-                  <p>Our signature recipe features premium organic chicken marinated for 72 hours in a reduction of pure <strong>Blue Curaçao</strong> and fermented neon-citrus enzymes. The vibrant hue is achieved without artificial dyes, using only the bioluminescent properties of deep-sea algae extracts.</p>
-                </section>
-                <section>
-                  <h3 className="text-on-surface font-bold text-lg mb-2">The River Process</h3>
-                  <p>Each batch is fried in artisan-refined <strong>mineral oil</strong> sourced directly from the subterranean springs of the mythical Blue Dragon river. This ensures a high smoke point that locks in the glowing glaze while providing a &ldquo;crackling thunder&rdquo; texture that resonates at 440Hz when bitten.</p>
-                </section>
+              {/* Streamed Description */}
+              <div className="mb-10 min-h-[120px]">
+                {isStreaming && !displayText ? (
+                  <div className="space-y-3">
+                    {[...Array(4)].map((_, i) => (
+                      <div key={i} className={`h-4 bg-surface-container-high rounded animate-pulse ${i === 3 ? "w-2/3" : "w-full"}`} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-on-surface-variant leading-relaxed whitespace-pre-wrap text-sm">
+                    {displayText}
+                    {isStreaming && (
+                      <span className="inline-block w-1 h-4 bg-primary ml-1 animate-pulse rounded-sm" />
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Action Buttons */}
