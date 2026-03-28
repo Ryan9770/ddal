@@ -1,26 +1,113 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  /* Stitch Design System Colors */
+  --color-background: #f6f6f6;
+  --color-foreground: #2d2f2f;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-primary: #a33800;
+  --color-primary-container: #ff7941;
+  --color-primary-dim: #8f3000;
+  --color-primary-fixed: #ff7941;
+  --color-primary-fixed-dim: #ff5e07;
+  --color-on-primary: #ffefeb;
+  --color-on-primary-container: #431200;
+  --color-on-primary-fixed: #000000;
+  --color-on-primary-fixed-variant: #531900;
+  --color-inverse-primary: #fc5b00;
+
+  --color-secondary: #006764;
+  --color-secondary-container: #71f7f1;
+  --color-secondary-dim: #005a57;
+  --color-secondary-fixed: #71f7f1;
+  --color-secondary-fixed-dim: #60e8e3;
+  --color-on-secondary: #bdfffb;
+  --color-on-secondary-container: #005c59;
+  --color-on-secondary-fixed: #004745;
+  --color-on-secondary-fixed-variant: #006764;
+
+  --color-tertiary: #7e5200;
+  --color-tertiary-container: #f8a91f;
+  --color-tertiary-dim: #6e4800;
+  --color-tertiary-fixed: #f8a91f;
+  --color-tertiary-fixed-dim: #e89b09;
+  --color-on-tertiary: #fff0e2;
+  --color-on-tertiary-container: #4d3100;
+  --color-on-tertiary-fixed: #301c00;
+  --color-on-tertiary-fixed-variant: #593900;
+
+  --color-error: #b31b25;
+  --color-error-container: #fb5151;
+  --color-error-dim: #9f0519;
+  --color-on-error: #ffefee;
+  --color-on-error-container: #570008;
+
+  --color-surface: #f6f6f6;
+  --color-surface-bright: #f6f6f6;
+  --color-surface-dim: #d3d5d5;
+  --color-surface-variant: #dbdddd;
+  --color-surface-tint: #a33800;
+  --color-surface-container: #e7e8e8;
+  --color-surface-container-high: #e1e3e3;
+  --color-surface-container-highest: #dbdddd;
+  --color-surface-container-low: #f0f1f1;
+  --color-surface-container-lowest: #ffffff;
+  --color-on-surface: #2d2f2f;
+  --color-on-surface-variant: #5a5c5c;
+  --color-inverse-surface: #0c0f0f;
+  --color-inverse-on-surface: #9c9d9d;
+
+  --color-outline: #767777;
+  --color-outline-variant: #acadad;
+  --color-on-background: #2d2f2f;
+
+  /* Fonts */
+  --font-sans: "Plus Jakarta Sans", sans-serif;
+  --font-headline: "Plus Jakarta Sans", sans-serif;
+  --font-body: "Plus Jakarta Sans", sans-serif;
+  --font-label: "Plus Jakarta Sans", sans-serif;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: "Plus Jakarta Sans", sans-serif;
+  background-color: #f6f6f6;
+  color: #2d2f2f;
+}
+
+.bg-primary-gradient {
+  background: linear-gradient(135deg, #a33800 0%, #ff7941 100%);
+}
+
+.primary-gradient {
+  background: linear-gradient(135deg, #a33800 0%, #ff7941 100%);
+}
+
+.glass-nav {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.glass-panel {
+  background: rgba(246, 246, 246, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.glass-header {
+  background: rgba(246, 246, 246, 0.8);
+  backdrop-filter: blur(20px);
+}
+
+.material-symbols-outlined {
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+  vertical-align: middle;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
